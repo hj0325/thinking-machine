@@ -1,19 +1,22 @@
 from pydantic import BaseModel
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Dict, Any
 
 # Enums based on 5W1H and Phase
 Category = Literal["Who", "What", "When", "Where", "Why", "How"]
 Phase = Literal["Problem", "Solution"]
 
+class NodeData(BaseModel):
+    label: str # Summarized Title
+    content: str # One sentence summary details
+    category: Category
+    phase: Phase
+    is_ai_generated: bool
+
 class Node(BaseModel):
     id: str
-    type: str = "default"  # 'default', 'input', 'output', 'ai_suggestion'
-    title: str = "" # New: Short interpretation/header
-    content: str    # Detailed content or summary
-    phase: Phase
-    category: Category
-    position: dict  # {'x': float, 'y': float}
-    is_ai_suggestion: bool = False
+    type: str = "default"
+    data: NodeData
+    position: Dict[str, float] # {"x": float, "y": float}
 
 class Edge(BaseModel):
     id: str
@@ -23,10 +26,8 @@ class Edge(BaseModel):
 
 class AnalysisRequest(BaseModel):
     text: str
-    current_nodes: List[Node] = []
-    current_edges: List[Edge] = []
+    history: List[Dict[str, Any]] = []
 
 class AnalysisResponse(BaseModel):
-    analysis: dict  # {'category': ..., 'phase': ..., 'summary': ...}
-    new_nodes: List[Node]
-    new_edges: List[Edge]
+    nodes: List[Node]
+    edges: List[Edge]

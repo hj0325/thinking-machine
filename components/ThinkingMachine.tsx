@@ -33,51 +33,42 @@ export default function ThinkingMachine({ }: ThinkingMachineProps) {
         setIsAnalyzing(true);
 
         try {
-            // Prepare the payload with current graph state for context
+            // Prepare the payload 
+            // We pass existing nodes as history if needed.
             const payload = {
                 text,
-                current_nodes: nodes.map(n => ({
+                history: nodes.map(n => ({
                     id: n.id,
-                    type: n.type || "default",
-                    content: n.data.label, // ReactFlow stores content in data.label usually, but we need to align with our backend model
-                    phase: n.data.phase || "Problem",
-                    category: n.data.category || "What",
-                    position: n.position,
-                    is_ai_suggestion: n.data.is_ai_suggestion || false
-                })),
-                current_edges: edges.map(e => ({
-                    id: e.id,
-                    source: e.source,
-                    target: e.target,
-                    label: e.label as string || undefined
+                    data: n.data,
+                    position: n.position
                 }))
             };
 
             // Call Backend
             const response = await axios.post("http://localhost:8000/analyze", payload);
-            const data = response.data; // AnalysisResponse
+            const data = response.data; // AnalysisResponse: { nodes: Node[], edges: Edge[] }
 
             // Process new nodes
-            const newReactFlowNodes = data.new_nodes.map((n: any) => ({
+            const newReactFlowNodes = data.nodes.map((n: any) => ({
                 id: n.id,
-                type: n.type,
+                type: n.type || 'default',
                 position: n.position,
                 data: {
-                    title: n.title, // New field
-                    label: n.content, // Body
-                    phase: n.phase,
-                    category: n.category,
-                    is_ai_suggestion: n.is_ai_suggestion
+                    title: n.data.label,      // Map backend 'label' (title) to frontend 'title'
+                    label: n.data.content,    // Map backend 'content' (detail) to frontend 'label' (body)
+                    phase: n.data.phase,
+                    category: n.data.category,
+                    is_ai_suggestion: n.data.is_ai_generated // Map to frontend prop
                 },
                 style: {
-                    background: n.is_ai_suggestion
+                    background: n.data.is_ai_generated
                         ? 'rgba(254, 252, 232, 0.9)'
-                        : (n.phase === 'Problem' ? 'rgba(255, 241, 242, 0.9)' : 'rgba(240, 249, 255, 0.9)'),
-                    border: n.is_ai_suggestion
+                        : (n.data.phase === 'Problem' ? 'rgba(255, 241, 242, 0.9)' : 'rgba(240, 249, 255, 0.9)'),
+                    border: n.data.is_ai_generated
                         ? '2px dashed #eab308'
-                        : (n.phase === 'Problem' ? '1px solid #fda4af' : '1px solid #bae6fd'),
+                        : (n.data.phase === 'Problem' ? '1px solid #fda4af' : '1px solid #bae6fd'),
                     borderRadius: '12px',
-                    padding: '0', // Reset padding to handle internal layout
+                    padding: '0',
                     width: 200,
                     display: 'flex',
                     flexDirection: 'column',
@@ -87,11 +78,7 @@ export default function ThinkingMachine({ }: ThinkingMachineProps) {
                 }
             }));
 
-            // Map to Custom Node Content logic (inline style for now, better to allow customization later)
-            // Custom render inside the node using label prop?
-            // React Flow default node just renders 'label'.
-            // We can pass a JSX element as label!
-
+            // JSX rendering in nodes
             const enrichedNodes = newReactFlowNodes.map((n: any) => ({
                 ...n,
                 data: {
@@ -111,22 +98,29 @@ export default function ThinkingMachine({ }: ThinkingMachineProps) {
                 }
             }));
 
-            const newReactFlowEdges = data.new_edges.map((e: any) => ({
+            const newReactFlowEdges = data.edges.map((e: any) => ({
                 id: e.id,
                 source: e.source,
                 target: e.target,
                 label: e.label,
                 type: 'smoothstep',
                 animated: true,
-                style: e.label === 'suggestion' ? { stroke: '#eab308', strokeDasharray: 5 } : undefined
+                style: { stroke: '#94a3b8' } // Default style
             }));
+
+            // Adjust edge style for suggestions
+            newReactFlowEdges.forEach((e: any) => {
+                if (e.label === 'suggestion' || e.label === 'expansion') {
+                    e.style = { stroke: '#eab308', strokeDasharray: 5 };
+                }
+            });
 
             setNodes((nds) => [...nds, ...enrichedNodes]);
             setEdges((eds) => [...eds, ...newReactFlowEdges]);
 
         } catch (error) {
             console.error("Failed to analyze input:", error);
-            alert("Failed to connect to AI Agent. Is the backend running?");
+            alert("Failed to connect to AI Agent. Check if backend is running and OpenAI Key is set.");
         } finally {
             setIsAnalyzing(false);
         }
