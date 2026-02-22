@@ -1,7 +1,7 @@
 "use client";
 
 import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles, X, ChevronRight } from "lucide-react";
+import { Sparkles, X, MessageCircle } from "lucide-react";
 
 const CATEGORY_COLORS = {
     Who: { bg: "bg-rose-50", border: "border-rose-200", text: "text-rose-700", dot: "bg-rose-400" },
@@ -12,7 +12,7 @@ const CATEGORY_COLORS = {
     How: { bg: "bg-indigo-50", border: "border-indigo-200", text: "text-indigo-700", dot: "bg-indigo-400" },
 };
 
-export default function SuggestionPanel({ suggestions, onDismiss }) {
+export default function SuggestionPanel({ suggestions, onDismiss, onSuggestionClick, activeSuggestionId }) {
     if (suggestions.length === 0) return null;
 
     return (
@@ -37,6 +37,7 @@ export default function SuggestionPanel({ suggestions, onDismiss }) {
             <AnimatePresence mode="popLayout">
                 {suggestions.map((s) => {
                     const colors = CATEGORY_COLORS[s.category] || CATEGORY_COLORS.What;
+                    const isActive = s.id === activeSuggestionId;
                     return (
                         <motion.div
                             key={s.id}
@@ -46,7 +47,9 @@ export default function SuggestionPanel({ suggestions, onDismiss }) {
                             exit={{ opacity: 0, x: 60, scale: 0.92 }}
                             transition={{ type: "spring", damping: 20, stiffness: 260 }}
                             className={`relative rounded-2xl border ${colors.border} ${colors.bg} 
-                                        shadow-lg backdrop-blur-sm overflow-hidden group`}
+                                        shadow-lg backdrop-blur-sm overflow-hidden group cursor-pointer
+                                        transition-all duration-200 ${isActive ? "ring-2 ring-indigo-400 ring-offset-1" : "hover:shadow-xl"}`}
+                            onClick={() => onSuggestionClick(s)}
                         >
                             {/* Dashed AI indicator */}
                             <div className="absolute inset-0 rounded-2xl border-2 border-dashed border-yellow-300 opacity-40 pointer-events-none" />
@@ -60,13 +63,15 @@ export default function SuggestionPanel({ suggestions, onDismiss }) {
                                         {s.category} · {s.phase}
                                     </span>
                                 </div>
-                                <button
-                                    onClick={() => onDismiss(s.id)}
-                                    className="opacity-0 group-hover:opacity-100 transition-opacity 
-                                               p-0.5 rounded-full hover:bg-black/10"
-                                >
-                                    <X className="w-3 h-3 text-gray-500" />
-                                </button>
+                                <div className="flex items-center gap-1">
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); onDismiss(s.id); }}
+                                        className="opacity-0 group-hover:opacity-100 transition-opacity 
+                                                   p-0.5 rounded-full hover:bg-black/10"
+                                    >
+                                        <X className="w-3 h-3 text-gray-500" />
+                                    </button>
+                                </div>
                             </div>
 
                             {/* Content */}
@@ -78,10 +83,10 @@ export default function SuggestionPanel({ suggestions, onDismiss }) {
                                 <p className="text-xs text-gray-600 leading-relaxed">{s.content}</p>
                             </div>
 
-                            {/* Connected node indicator */}
+                            {/* Click hint */}
                             <div className="px-3 pb-2.5 flex items-center gap-1 text-[10px] text-gray-400">
-                                <ChevronRight className="w-3 h-3" />
-                                <span>연결된 노드에 마우스를 올려보세요</span>
+                                <MessageCircle className="w-3 h-3" />
+                                <span>클릭해서 AI와 더 얘기하기</span>
                             </div>
                         </motion.div>
                     );
@@ -90,3 +95,4 @@ export default function SuggestionPanel({ suggestions, onDismiss }) {
         </motion.div>
     );
 }
+

@@ -9,7 +9,7 @@ import ReactFlow, {
 } from "reactflow";
 import "reactflow/dist/style.css";
 
-export default function NodeMap({ nodes, edges, onNodesChange, onEdgesChange }) {
+export default function NodeMap({ nodes, edges, onNodesChange, onEdgesChange, highlightedNodeIds }) {
 
     const defaultEdgeOptions = useMemo(() => ({
         type: 'smoothstep',
@@ -20,6 +20,15 @@ export default function NodeMap({ nodes, edges, onNodesChange, onEdgesChange }) 
             color: '#b1b1b7',
         },
     }), []);
+
+    // highlightedNodeIds 기반으로 className을 항상 최신 상태로 유지
+    const displayNodes = useMemo(() => {
+        if (!highlightedNodeIds || highlightedNodeIds.size === 0) return nodes;
+        return nodes.map((n) => ({
+            ...n,
+            className: highlightedNodeIds.has(n.id) ? 'node-highlighted' : (n.className || ''),
+        }));
+    }, [nodes, highlightedNodeIds]);
 
     return (
         <div className="w-full h-full bg-slate-50">
@@ -36,7 +45,7 @@ export default function NodeMap({ nodes, edges, onNodesChange, onEdgesChange }) 
             </div>
 
             <ReactFlow
-                nodes={nodes}
+                nodes={displayNodes}
                 edges={edges}
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
@@ -52,3 +61,4 @@ export default function NodeMap({ nodes, edges, onNodesChange, onEdgesChange }) 
         </div>
     );
 }
+

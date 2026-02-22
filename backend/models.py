@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from typing import List, Optional, Literal, Dict, Any
 
+
 # Enums based on 5W1H and Phase
 Category = Literal["Who", "What", "When", "Where", "Why", "How"]
 Phase = Literal["Problem", "Solution"]
@@ -44,3 +45,30 @@ class AnalysisRequest(BaseModel):
 class AnalysisResponse(BaseModel):
     nodes: List[Node]
     edges: List[Edge]
+
+
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class ChatRequest(BaseModel):
+    suggestion_title: str
+    suggestion_content: str
+    suggestion_category: str
+    suggestion_phase: str
+    messages: List[ChatMessage] = []   # 이전 대화 히스토리
+    user_message: str                  # 현재 사용자 메시지
+
+
+class ChatResponse(BaseModel):
+    reply: str
+
+
+class ChatToNodesRequest(BaseModel):
+    suggestion_title: str
+    suggestion_content: str
+    suggestion_category: str
+    suggestion_phase: str
+    messages: List[ChatMessage]
+    existing_nodes: List[Dict[str, Any]] = []  # history (기존 노드들)

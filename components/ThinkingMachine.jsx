@@ -10,19 +10,83 @@ import axios from "axios";
 import NodeMap from "./NodeMap";
 import InputPanel from "./InputPanel";
 import SuggestionPanel from "./SuggestionPanel";
+import ChatDialog from "./ChatDialog";
 
 const INITIAL_NODES = [];
 const INITIAL_EDGES = [];
+
+// 노드 데이터에서 JSX label 빌드 (재사용)
+function buildNodeLabel(nodeData) {
+    return (
+        <div className="flex flex-col h-full text-left">
+            <div className="px-3 py-2 border-b border-black/5 bg-black/5 text-[10px] font-bold uppercase tracking-wider opacity-70 flex justify-between items-center">
+                <span>{nodeData.category}</span>
+                <span className={`w-2 h-2 rounded-full ${nodeData.phase === 'Problem' ? 'bg-red-400' : 'bg-blue-400'}`}></span>
+            </div>
+            <div className="p-3">
+                <div className="font-bold text-sm mb-1 text-gray-800 leading-tight">{nodeData.title}</div>
+                <div className="text-xs text-gray-600 leading-relaxed line-clamp-4">{nodeData.label}</div>
+            </div>
+        </div>
+    );
+}
+
+function buildNodeStyle(phase) {
+    return {
+        background: phase === 'Problem' ? 'rgba(255, 241, 242, 0.9)' : 'rgba(240, 249, 255, 0.9)',
+        border: phase === 'Problem' ? '1px solid #fda4af' : '1px solid #bae6fd',
+        borderRadius: '12px',
+        padding: '0',
+        width: 200,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+        backdropFilter: 'blur(8px)',
+    };
+}
+
+function buildEdgeStyle(edgeId) {
+    if (edgeId.startsWith('e-cross-')) {
+        return { style: { stroke: '#8b5cf6', strokeWidth: 2.5 }, animated: false };
+    }
+    if (edgeId.startsWith('e-input-') || edgeId.startsWith('e-chat-')) {
+        return { style: { stroke: '#6366f1', strokeDasharray: '4 3', strokeWidth: 1.5 }, animated: false };
+    }
+    return { style: { stroke: '#94a3b8' }, animated: true };
+}
+
+function toReactFlowNode(n, highlightedId) {
+    const nodeData = {
+        title: n.data.label,
+        label: n.data.content,
+        phase: n.data.phase,
+        category: n.data.category,
+        is_ai_suggestion: false,
+    };
+    const rfNode = {
+        id: n.id,
+        type: n.type || 'default',
+        position: n.position,
+        className: n.id === highlightedId ? 'node-highlighted' : '',
+        data: { ...nodeData },
+        style: buildNodeStyle(n.data.phase),
+    };
+    rfNode.data.label = buildNodeLabel(nodeData);
+    return rfNode;
+}
 
 export default function ThinkingMachine() {
     const [nodes, setNodes, onNodesChange] = useNodesState(INITIAL_NODES);
     const [edges, setEdges, onEdgesChange] = useEdgesState(INITIAL_EDGES);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
 
-    // AI 제안 패널 상태
+    // AI 제안 패널
     const [suggestions, setSuggestions] = useState([]);
-    // 제안과 연결된 노드 ID들 (글로우 효과)
     const [highlightedNodeIds, setHighlightedNodeIds] = useState(new Set());
+
+    // Chat dialog
+    const [activeSuggestion, setActiveSuggestion] = useState(null);
 
     const onConnect = useCallback(
         (params) => setEdges((eds) => addEdge(params, eds)),
@@ -38,9 +102,39 @@ export default function ThinkingMachine() {
                     next.delete(dismissed.relatedNodeId);
                     return next;
                 });
+                // 열려있는 채팅창이 dismiss된 카드와 같으면 닫기
+                if (activeSuggestion?.id === suggestionId) {
+                    setActiveSuggestion(null);
+                }
             }
             return prev.filter((s) => s.id !== suggestionId);
         });
+    };
+
+    const handleSuggestionClick = (suggestion) => {
+        // 같은 카드 다시 클릭 시 토글
+        if (activeSuggestion?.id === suggestion.id) {
+            setActiveSuggestion(null);
+        } else {
+            setActiveSuggestion(suggestion);
+        }
+    };
+
+    // 채팅 대화에서 노드+엣지 추가
+    const handleAddNodesFromChat = (data) => {
+        const newEdges = data.edges.map((e) => ({
+            id: e.id,
+            source: e.source,
+            target: e.target,
+            label: e.label,
+            type: 'smoothstep',
+            ...buildEdgeStyle(e.id),
+        }));
+
+        const newNodes = data.nodes.map((n) => toReactFlowNode(n, null));
+
+        setNodes((nds) => [...nds, ...newNodes]);
+        setEdges((eds) => [...eds, ...newEdges]);
     };
 
     const handleInputSubmit = async (text) => {
@@ -49,80 +143,32 @@ export default function ThinkingMachine() {
         try {
             const payload = {
                 text,
-                history: nodes.map(n => ({
+                history: nodes.map((n) => ({
                     id: n.id,
                     data: {
                         title: n.data.title,
                         category: n.data.category,
                         phase: n.data.phase,
                     },
-                    position: n.position
-                }))
+                    position: n.position,
+                })),
             };
 
             const response = await axios.post("http://localhost:8000/analyze", payload);
             const data = response.data;
 
-            // ── 제안 노드(is_ai_generated=true)와 사용자 노드 분리 ──
-            const suggestionNodeData = data.nodes.find(n => n.data.is_ai_generated);
-            const userNodeDatas = data.nodes.filter(n => !n.data.is_ai_generated);
+            // 제안 노드(is_ai_generated=true)와 사용자 노드 분리
+            const suggestionNodeData = data.nodes.find((n) => n.data.is_ai_generated);
+            const userNodeDatas = data.nodes.filter((n) => !n.data.is_ai_generated);
 
             // e-suggest- 엣지에서 연결된 사용자 노드 ID 파악
-            const suggestEdge = data.edges.find(e => e.id.startsWith("e-suggest-"));
+            const suggestEdge = data.edges.find((e) => e.id.startsWith("e-suggest-"));
             const highlightedMainNodeId = suggestEdge ? suggestEdge.source : null;
 
-            // ── 사용자 노드 → ReactFlow에 추가 ──
-            const newReactFlowNodes = userNodeDatas.map((n) => ({
-                id: n.id,
-                type: n.type || 'default',
-                position: n.position,
-                className: n.id === highlightedMainNodeId ? 'node-highlighted' : '',
-                data: {
-                    title: n.data.label,
-                    label: n.data.content,
-                    phase: n.data.phase,
-                    category: n.data.category,
-                    is_ai_suggestion: false,
-                },
-                style: {
-                    background: n.data.phase === 'Problem'
-                        ? 'rgba(255, 241, 242, 0.9)'
-                        : 'rgba(240, 249, 255, 0.9)',
-                    border: n.data.phase === 'Problem'
-                        ? '1px solid #fda4af'
-                        : '1px solid #bae6fd',
-                    borderRadius: '12px',
-                    padding: '0',
-                    width: 200,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    overflow: 'hidden',
-                    boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
-                    backdropFilter: 'blur(8px)'
-                }
-            }));
+            // 사용자 노드 → ReactFlow
+            const enrichedNodes = userNodeDatas.map((n) => toReactFlowNode(n, highlightedMainNodeId));
 
-            // JSX 렌더링
-            const enrichedNodes = newReactFlowNodes.map((n) => ({
-                ...n,
-                data: {
-                    ...n.data,
-                    label: (
-                        <div className="flex flex-col h-full text-left">
-                            <div className="px-3 py-2 border-b border-black/5 bg-black/5 text-[10px] font-bold uppercase tracking-wider opacity-70 flex justify-between items-center">
-                                <span>{n.data.category}</span>
-                                <span className={`w-2 h-2 rounded-full ${n.data.phase === 'Problem' ? 'bg-red-400' : 'bg-blue-400'}`}></span>
-                            </div>
-                            <div className="p-3">
-                                <div className="font-bold text-sm mb-1 text-gray-800 leading-tight">{n.data.title}</div>
-                                <div className="text-xs text-gray-600 leading-relaxed line-clamp-4">{n.data.label}</div>
-                            </div>
-                        </div>
-                    )
-                }
-            }));
-
-            // ── 제안 노드 → SuggestionPanel 상태로 ──
+            // 제안 노드 → SuggestionPanel
             if (suggestionNodeData) {
                 const newSuggestion = {
                     id: `suggestion-${Date.now()}`,
@@ -138,32 +184,21 @@ export default function ThinkingMachine() {
                 }
             }
 
-            // ── 엣지 처리 (제안 노드 관련 e-suggest- 엣지는 제외) ──
+            // 엣지 처리 (e-suggest- 제외)
             const newReactFlowEdges = data.edges
-                .filter(e => !e.id.startsWith('e-suggest-'))
+                .filter((e) => !e.id.startsWith("e-suggest-"))
                 .map((e) => ({
                     id: e.id,
                     source: e.source,
                     target: e.target,
                     label: e.label,
                     type: 'smoothstep',
-                    animated: true,
-                    style: { stroke: '#94a3b8' }
+                    ...buildEdgeStyle(e.id),
                 }));
 
-            newReactFlowEdges.forEach((e) => {
-                if (e.id.startsWith('e-cross-')) {
-                    e.style = { stroke: '#8b5cf6', strokeWidth: 2.5 };
-                    e.animated = false;
-                } else if (e.id.startsWith('e-input-')) {
-                    e.style = { stroke: '#6366f1', strokeDasharray: '4 3', strokeWidth: 1.5 };
-                    e.animated = false;
-                }
-            });
-
             setNodes((nds) => {
-                // 이미 존재하는 하이라이트 노드에 className 업데이트
-                const updated = nds.map(n => ({
+                // 기존 하이라이트된 노드의 className 갱신
+                const updated = nds.map((n) => ({
                     ...n,
                     className: highlightedNodeIds.has(n.id) ? 'node-highlighted' : (n.className || ''),
                 }));
@@ -199,13 +234,26 @@ export default function ThinkingMachine() {
                     edges={edges}
                     onNodesChange={onNodesChange}
                     onEdgesChange={onEdgesChange}
+                    highlightedNodeIds={highlightedNodeIds}
                 />
 
                 {/* AI 제안 우측 패널 */}
                 <SuggestionPanel
                     suggestions={suggestions}
                     onDismiss={handleDismissSuggestion}
+                    onSuggestionClick={handleSuggestionClick}
+                    activeSuggestionId={activeSuggestion?.id}
                 />
+
+                {/* AI 채팅 대화창 */}
+                {activeSuggestion && (
+                    <ChatDialog
+                        suggestion={activeSuggestion}
+                        onClose={() => setActiveSuggestion(null)}
+                        onAddNodes={handleAddNodesFromChat}
+                        existingNodes={nodes}
+                    />
+                )}
 
                 <InputPanel onSubmit={handleInputSubmit} isAnalyzing={isAnalyzing} />
             </main>

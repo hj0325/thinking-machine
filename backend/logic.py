@@ -5,7 +5,7 @@ from typing import List, Dict, Any
 from dotenv import load_dotenv
 from openai import OpenAI
 from pydantic import BaseModel
-from .models import Node, Edge, NodeData, Category, Phase, UserNode, CrossConnectionResult
+from .models import Node, Edge, NodeData, Category, Phase, UserNode, CrossConnectionResult, ChatMessage
 
 # Load .env.local first (takes precedence), then .env
 load_dotenv(dotenv_path=".env.local")
@@ -292,3 +292,167 @@ user_nodes 전체를 보고 아이디어를 확장하는 날카로운 질문이�
             "nodes": all_nodes,
             "edges": edges
         }
+
+    # ─────────────────────────────────────────────
+    # 2. AI 채팅: suggestion 카드 클릭 후 대화
+    # ─────────────────────────────────────────────
+    def chat_with_suggestion(
+        self,
+        suggestion_title: str,
+        suggestion_content: str,
+        suggestion_category: str,
+        suggestion_phase: str,
+        messages: List[ChatMessage],
+        user_message: str,
+    ) -> str:
+        system_prompt = f"""너는 사용자의 아이디어를 함께 탐구하는 AI 대화 파트너다.
+
+아래 제안 카드를 중심으로 사용자와 자유롭게 대화하라.
+- 처음 대화(messages가 비어 있을 때)라면 제안의 핵심을 2~3문장으로 친절하게 설명하고, 사용자가 어떤 방향으로 발전시키고 싶은지 열린 질문으로 마무리하라.
+- 이후 대화에서는 사용자의 답변을 토대로 아이디어를 구체화‧확장‧검증하라.
+- 응답은 200자 내외로 간결하게 유지하라.
+- 언어는 한국어.
+
+[제안 카드]
+카테고리: {suggestion_category} / {suggestion_phase}
+제목: {suggestion_title}
+내용: {suggestion_content}
+"""
+        chat_history = [
+            {"role": msg.role, "content": msg.content}
+            for msg in messages
+        ]
+        chat_history.append({"role": "user", "content": user_message})
+
+        response = self.client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                *chat_history,
+            ],
+        )
+        return response.choices[0].message.content
+
+    # ─────────────────────────────────────────────
+    # 3. 대화 내용 → ReactFlow 노드+엣지 변환
+    # ─────────────────────────────────────────────
+    def chat_to_nodes(
+        self,
+        suggestion_title: str,
+        suggestion_content: str,
+        suggestion_category: str,
+        suggestion_phase: str,
+        messages: List[ChatMessage],
+        existing_nodes: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        history_context = self.build_history_context(existing_nodes)
+
+        conversation_text = "\n".join(
+            f"[{m.role.upper()}] {m.content}" for m in messages
+        )
+
+        system_prompt = f"""
+너는 대화 내용을 6하원칙 노드로 구조화하는 에이전트다.
+
+아래 대화를 분석해서 핵심 아이디어를 1~4개의 노드로 추출하라.
+각 노드는 label(짧은 동사형 제목), content(한 문장), category(Who/What/When/Where/Why/How), phase(Problem/Solution)로 구성.
+
+[제안 카드 원본]
+{suggestion_category}/{suggestion_phase}: {suggestion_title} - {suggestion_content}
+
+[대화 내용]
+{conversation_text}
+
+## 기존 노드 목록 (cross_connections 시 사용)
+{history_context}
+"""
+
+        class ChatNodeResult(BaseModel):
+            user_nodes: List[UserNode]
+            cross_connections: List[CrossConnectionResult]
+
+        completion = self.client.beta.chat.completions.parse(
+            model="gpt-4o-2024-08-06",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": "대화를 노드로 구조화해줘."},
+            ],
+            response_format=ChatNodeResult,
+        )
+        result = completion.choices[0].message.parsed
+
+        # 슬롯 카운트 (기존 노드 기반)
+        slot_counts: Dict[str, int] = {}
+        for h_node in existing_nodes:
+            h_data = h_node.get("data", {})
+            h_phase = h_data.get("phase", "")
+            h_cat = h_data.get("category", "")
+            if h_phase and h_cat:
+                key = f"{h_phase}_{h_cat}"
+                slot_counts[key] = slot_counts.get(key, 0) + 1
+
+        created_nodes = []
+        created_node_ids = []
+        for un in result.user_nodes:
+            node_id = str(uuid.uuid4())
+            key = f"{un.phase}_{un.category}"
+            slot_idx = slot_counts.get(key, 0)
+            pos = self.calculate_position(un.phase, un.category, slot_index=slot_idx)
+            slot_counts[key] = slot_idx + 1
+
+            node = Node(
+                id=node_id,
+                type="default",
+                data=NodeData(
+                    label=un.label,
+                    content=un.content,
+                    category=un.category,
+                    phase=un.phase,
+                    is_ai_generated=False
+                ),
+                position=pos
+            )
+            created_nodes.append(node)
+            created_node_ids.append(node_id)
+
+        edges = []
+        # 같은 대화에서 나온 노드들 순차 연결
+        for i in range(len(created_node_ids) - 1):
+            edges.append(Edge(
+                id=f"e-chat-{created_node_ids[i]}-{created_node_ids[i+1]}",
+                source=created_node_ids[i],
+                target=created_node_ids[i + 1],
+                label="이어서"
+            ))
+
+        # cross-connections to existing nodes
+        existing_ids = {n.get("id") for n in existing_nodes}
+        cross_connected = set()
+        for cross in result.cross_connections:
+            if cross.existing_node_id not in existing_ids:
+                continue
+            new_idx = cross.new_node_index
+            if new_idx >= len(created_node_ids):
+                new_idx = 0
+            target_id = created_node_ids[new_idx]
+            edges.append(Edge(
+                id=f"e-cross-{cross.existing_node_id}-{target_id}",
+                source=cross.existing_node_id,
+                target=target_id,
+                label=cross.connection_label
+            ))
+            cross_connected.add(target_id)
+
+        # fallback: 기존 노드가 있는데 아무 연결도 없으면 마지막 기존 노드에 연결
+        if existing_nodes and created_node_ids and not cross_connected:
+            first_id = created_node_ids[0]
+            anchor = existing_nodes[-1].get("id")
+            if anchor and anchor in existing_ids:
+                edges.append(Edge(
+                    id=f"e-cross-{anchor}-{first_id}",
+                    source=anchor,
+                    target=first_id,
+                    label="대화에서 발전"
+                ))
+
+        return {"nodes": created_nodes, "edges": edges}
