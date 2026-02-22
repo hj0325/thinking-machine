@@ -5,6 +5,11 @@ from typing import List, Optional, Literal, Dict, Any
 Category = Literal["Who", "What", "When", "Where", "Why", "How"]
 Phase = Literal["Problem", "Solution"]
 
+class CrossConnectionResult(BaseModel):
+    existing_node_id: str       # 기존 노드 ID (history에서 선택)
+    connection_label: str       # 연결 관계 설명
+
+
 class NodeData(BaseModel):
     label: str # Summarized Title
     content: str # One sentence summary details

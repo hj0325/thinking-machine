@@ -4,23 +4,12 @@ import { useMemo } from "react";
 import ReactFlow, {
     Background,
     Controls,
-    Edge,
-    Node,
-    useNodesState,
-    useEdgesState,
     ConnectionMode,
     MarkerType,
 } from "reactflow";
 import "reactflow/dist/style.css";
 
-interface NodeMapProps {
-    nodes: Node[];
-    edges: Edge[];
-    onNodesChange: any;
-    onEdgesChange: any;
-}
-
-export default function NodeMap({ nodes, edges, onNodesChange, onEdgesChange }: NodeMapProps) {
+export default function NodeMap({ nodes, edges, onNodesChange, onEdgesChange }) {
 
     const defaultEdgeOptions = useMemo(() => ({
         type: 'smoothstep',

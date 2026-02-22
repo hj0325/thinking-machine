@@ -4,15 +4,10 @@ import { useState } from "react";
 import { Send, Sparkles } from "lucide-react";
 import { motion } from "framer-motion";
 
-interface InputPanelProps {
-    onSubmit: (text: string) => void;
-    isAnalyzing: boolean;
-}
-
-export default function InputPanel({ onSubmit, isAnalyzing }: InputPanelProps) {
+export default function InputPanel({ onSubmit, isAnalyzing }) {
     const [text, setText] = useState("");
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = (e) => {
         e.preventDefault();
         if (text.trim() && !isAnalyzing) {
             onSubmit(text);

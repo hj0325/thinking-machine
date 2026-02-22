@@ -4,32 +4,27 @@ import { useState, useCallback } from "react";
 import {
     useNodesState,
     useEdgesState,
-    Node,
-    Edge,
     addEdge,
-    Connection,
 } from "reactflow";
 import axios from "axios";
 import { Loader2 } from "lucide-react";
 import NodeMap from "./NodeMap";
 import InputPanel from "./InputPanel";
 
-interface ThinkingMachineProps { }
+const INITIAL_NODES = [];
+const INITIAL_EDGES = [];
 
-const INITIAL_NODES: Node[] = [];
-const INITIAL_EDGES: Edge[] = [];
-
-export default function ThinkingMachine({ }: ThinkingMachineProps) {
+export default function ThinkingMachine() {
     const [nodes, setNodes, onNodesChange] = useNodesState(INITIAL_NODES);
     const [edges, setEdges, onEdgesChange] = useEdgesState(INITIAL_EDGES);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
 
     const onConnect = useCallback(
-        (params: Connection) => setEdges((eds) => addEdge(params, eds)),
+        (params) => setEdges((eds) => addEdge(params, eds)),
         [setEdges]
     );
 
-    const handleInputSubmit = async (text: string) => {
+    const handleInputSubmit = async (text) => {
         setIsAnalyzing(true);
 
         try {
@@ -39,7 +34,11 @@ export default function ThinkingMachine({ }: ThinkingMachineProps) {
                 text,
                 history: nodes.map(n => ({
                     id: n.id,
-                    data: n.data,
+                    data: {
+                        title: n.data.title,
+                        category: n.data.category,
+                        phase: n.data.phase,
+                    },
                     position: n.position
                 }))
             };
@@ -49,7 +48,7 @@ export default function ThinkingMachine({ }: ThinkingMachineProps) {
             const data = response.data; // AnalysisResponse: { nodes: Node[], edges: Edge[] }
 
             // Process new nodes
-            const newReactFlowNodes = data.nodes.map((n: any) => ({
+            const newReactFlowNodes = data.nodes.map((n) => ({
                 id: n.id,
                 type: n.type || 'default',
                 position: n.position,
@@ -79,7 +78,7 @@ export default function ThinkingMachine({ }: ThinkingMachineProps) {
             }));
 
             // JSX rendering in nodes
-            const enrichedNodes = newReactFlowNodes.map((n: any) => ({
+            const enrichedNodes = newReactFlowNodes.map((n) => ({
                 ...n,
                 data: {
                     ...n.data,
@@ -98,7 +97,7 @@ export default function ThinkingMachine({ }: ThinkingMachineProps) {
                 }
             }));
 
-            const newReactFlowEdges = data.edges.map((e: any) => ({
+            const newReactFlowEdges = data.edges.map((e) => ({
                 id: e.id,
                 source: e.source,
                 target: e.target,
@@ -108,9 +107,14 @@ export default function ThinkingMachine({ }: ThinkingMachineProps) {
                 style: { stroke: '#94a3b8' } // Default style
             }));
 
-            // Adjust edge style for suggestions
-            newReactFlowEdges.forEach((e: any) => {
-                if (e.label === 'suggestion' || e.label === 'expansion') {
+            // Adjust edge style based on type
+            newReactFlowEdges.forEach((e) => {
+                if (e.id.startsWith('e-cross-')) {
+                    // 기존 노드와의 cross-connection: 보라색 굵은 실선
+                    e.style = { stroke: '#8b5cf6', strokeWidth: 2.5 };
+                    e.animated = false;
+                } else if (e.label === 'suggestion' || e.label === 'expansion') {
+                    // 내부 AI 제안 연결: 노란 점선
                     e.style = { stroke: '#eab308', strokeDasharray: 5 };
                 }
             });
