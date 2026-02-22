@@ -113,11 +113,16 @@ export default function ThinkingMachine() {
                     // 기존 노드와의 cross-connection: 보라색 굵은 실선
                     e.style = { stroke: '#8b5cf6', strokeWidth: 2.5 };
                     e.animated = false;
-                } else if (e.label === 'suggestion' || e.label === 'expansion') {
-                    // 내부 AI 제안 연결: 노란 점선
+                } else if (e.id.startsWith('e-input-')) {
+                    // 같은 인풋에서 나온 노드들: 인디고 점선
+                    e.style = { stroke: '#6366f1', strokeDasharray: '4 3', strokeWidth: 1.5 };
+                    e.animated = false;
+                } else if (e.id.startsWith('e-suggest-')) {
+                    // AI 제안 연결: 노란 점선 (animated)
                     e.style = { stroke: '#eab308', strokeDasharray: 5 };
                 }
             });
+
 
             setNodes((nds) => [...nds, ...enrichedNodes]);
             setEdges((eds) => [...eds, ...newReactFlowEdges]);
