@@ -49,15 +49,31 @@ class ThinkingAgent:
     def __init__(self, api_key: str):
         self.client = OpenAI(api_key=api_key)
 
-    def calculate_position(self, phase: Phase, category: Category, offset_x: int = 0, offset_y: int = 0) -> Dict[str, float]:
+    def calculate_position(self, phase: Phase, category: Category, slot_index: int = 0) -> Dict[str, float]:
+        """
+        같은 (phase, category) 조합의 노드들은 열(column) 단위로 배치.
+        slot_index=0 → 중앙, 1 → 오른쪽, 2 → 왼쪽, 3 → 더 오른쪽 ...
+        """
         x_range = PROBLEM_X_RANGE if phase == "Problem" else SOLUTION_X_RANGE
-        mid_x = (x_range[0] + x_range[1]) / 2
-        jitter_x = random.randint(-40, 40)
+        base_x = (x_range[0] + x_range[1]) / 2
         base_y = CATEGORY_Y_MAP.get(category, 300)
-        jitter_y = random.randint(-10, 10)
+
+        NODE_STRIDE_X = 230  # 노드 너비(200) + 간격(30)
+        NODE_STRIDE_Y = 160  # 노드 높이(120) + 간격(40)
+
+        # 0 → 0, 1 → +1, 2 → -1, 3 → +2, 4 → -2, ...
+        if slot_index == 0:
+            col_offset = 0
+        elif slot_index % 2 == 1:
+            col_offset = (slot_index + 1) // 2
+        else:
+            col_offset = -(slot_index // 2)
+
+        row = slot_index // 4  # 4개마다 아래 줄로
+
         return {
-            "x": mid_x + jitter_x + offset_x,
-            "y": base_y + jitter_y + offset_y
+            "x": base_x + col_offset * NODE_STRIDE_X,
+            "y": base_y + row * NODE_STRIDE_Y
         }
 
     def build_history_context(self, history: List[Dict[str, Any]]) -> str:
@@ -120,11 +136,12 @@ user_nodes 전체를 보고 아이디어를 확장하는 날카로운 질문이�
 
 ## STEP 3. 기존 노드 연결 (cross_connections)
 
-아래 기존 노드 목록을 보고, 새로 만든 user_nodes 중 **의미적으로 관련된** 것과 연결하라.
+기존 노드 목록을 보고, 새로 만든 user_nodes 중 **의미적으로 관련된** 것과 연결하라.
 - existing_node_id: 기존 노드 ID
 - new_node_index: 연결될 user_nodes 인덱스
 - connection_label: 관계 설명 한 구절
-- 관련 없으면 빈 배열. 최대 3개.
+- **기존 노드가 존재하면 반드시 최소 1개는 연결할 것.** 같은 카테고리, 같은 phase, 또는 주제의 연장선상이면 반드시 연결하라.
+- 최대 3개.
 
 ## 기존 노드 목록
 {history_context}
@@ -141,14 +158,27 @@ user_nodes 전체를 보고 아이디어를 확장하는 날카로운 질문이�
 
         result = completion.choices[0].message.parsed
 
-        # ── 1. Create user nodes ──
+        # ── 1. Build slot_counts from history (기존 노드들이 각 슬롯을 몇 개 차지하는지) ──
+        slot_counts: Dict[str, int] = {}
+        for h_node in history:
+            h_data = h_node.get("data", {})
+            h_phase = h_data.get("phase", "")
+            h_cat = h_data.get("category", "")
+            if h_phase and h_cat:
+                key = f"{h_phase}_{h_cat}"
+                slot_counts[key] = slot_counts.get(key, 0) + 1
+
+        # ── 2. Create user nodes ──
         created_nodes = []
         created_node_ids = []
 
         for i, un in enumerate(result.user_nodes):
             node_id = str(uuid.uuid4())
-            # 같은 카테고리/페이즈 노드가 겹치지 않도록 인덱스 기반 오프셋
-            pos = self.calculate_position(un.phase, un.category, offset_x=i * 30, offset_y=i * 30)
+            key = f"{un.phase}_{un.category}"
+            slot_idx = slot_counts.get(key, 0)
+            pos = self.calculate_position(un.phase, un.category, slot_index=slot_idx)
+            slot_counts[key] = slot_idx + 1  # 다음 노드를 위해 슬롯 증가
+
             node = Node(
                 id=node_id,
                 type="default",
@@ -164,13 +194,15 @@ user_nodes 전체를 보고 아이디어를 확장하는 날카로운 질문이�
             created_nodes.append(node)
             created_node_ids.append(node_id)
 
-        # ── 2. Create suggestion node ──
+        # ── 3. Create suggestion node ──
         suggestion_id = str(uuid.uuid4())
+        # 제안 노드는 해당 category/phase의 다음 슬롯에 배치
+        s_key = f"{result.suggestion_phase}_{result.suggestion_category}"
+        s_slot = slot_counts.get(s_key, 0)
         suggest_pos = self.calculate_position(
             result.suggestion_phase,
             result.suggestion_category,
-            offset_x=60,
-            offset_y=0
+            slot_index=s_slot
         )
         suggestion_node = Node(
             id=suggestion_id,
@@ -211,6 +243,8 @@ user_nodes 전체를 보고 아이디어를 확장하는 날카로운 질문이�
 
         # ── 5. Cross-connections to existing nodes ──
         existing_ids = {node.get("id") for node in history}
+        cross_connected_new_ids = set()
+
         for cross in result.cross_connections:
             if cross.existing_node_id not in existing_ids:
                 continue
@@ -224,6 +258,35 @@ user_nodes 전체를 보고 아이디어를 확장하는 날카로운 질문이�
                 target=target_id,
                 label=cross.connection_label
             ))
+            cross_connected_new_ids.add(target_id)
+
+        # ── 6. Fallback: 기존 노드가 있지만 cross_connections가 없으면
+        #       첫 번째 새 노드를 가장 가까운 기존 노드와 강제 연결 ──
+        if history and created_node_ids and not cross_connected_new_ids:
+            first_new_id = created_node_ids[0]
+            first_new_cat = result.user_nodes[0].category if result.user_nodes else None
+
+            # 같은 카테고리 기존 노드 우선, 없으면 가장 마지막 기존 노드
+            best_existing = None
+            for h_node in reversed(history):
+                h_cat = h_node.get("data", {}).get("category", "")
+                if h_cat == first_new_cat:
+                    best_existing = h_node.get("id")
+                    break
+            if best_existing is None:
+                best_existing = history[-1].get("id")
+
+            if best_existing and best_existing in existing_ids:
+                edge_id = f"e-cross-{best_existing}-{first_new_id}"
+                # 중복 엣지 방지
+                existing_edge_ids = {e.id for e in edges}
+                if edge_id not in existing_edge_ids:
+                    edges.append(Edge(
+                        id=edge_id,
+                        source=best_existing,
+                        target=first_new_id,
+                        label="관련"
+                    ))
 
         return {
             "nodes": all_nodes,
